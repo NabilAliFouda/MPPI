@@ -19,6 +19,8 @@ L=1
 MAXSTEER=30
 MAXVEL=10
 ##
+init_state=np.zeros(3)
+nom_U=np.zeros(HOR,2)
 #path=
 def forwardModel(x0, u):
     beta=u[1]/2
@@ -27,20 +29,29 @@ def forwardModel(x0, u):
     x1[1]=x1[1]+DT*u[0]*math.sin(x1[2]+beta)
     x1[2]=x1[2]+DT*(u[0]/L)*math.sin(beta)
     return x1
-def calculateCost(states):
+def calculateCost(Actions):
+    states=np.full((HOR+1,3),init_state)
+    for i in range(HOR):
+        states[i+1]=forwardModel(states[i],Actions[i])
     cost = 0
     for state in states:
         ##to be edited later
         stateCost=state[0]-state[1]
         cost+=stateCost
+        ###
     return cost
-def generateControlActions(u0):
+def generateControlActions():
     perturbations=np.random.rand(HOR,2)-np.full((HOR,2),0.5)
     scale=np.array([[2*MAXVEL,0],[0,2*MAXSTEER]])
-    u=u0+perturbations@scale
-    return u
+    Du=perturbations@scale
+    return Du
 def FindOptimalControlActions():
-    pass
+    costs = np.zeros(SAMPLES)
+    Dus=np.zeros(SAMPLES,HOR,2)
+    for i in range(SAMPLES):
+        Dus[i]=generateControlActions()
+        costs[i]=calculateCost(nom_U+Dus[i])
+    weights=np.exp(-1*costs)
 if __name__ == '__main__' :
     rospy.init_node("sim")
     x0=np.array([0.0,0.0,0.0])
