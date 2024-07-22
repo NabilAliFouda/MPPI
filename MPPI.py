@@ -11,8 +11,9 @@ import math
 
 #MPPI paramters
 DT=0.1
-HOR=15
-SAMPLES=1000
+HOR=4
+SAMPLES=2000
+LAMBDA=1
 ###
 #Vehilce Parameters
 L=1
@@ -20,10 +21,10 @@ MAXSTEER=30
 MAXVEL=10
 ##
 init_state=np.zeros(3)
-nom_U=np.zeros(HOR,2)
+nom_U=np.zeros((HOR,2))
 #path=
 def forwardModel(x0, u):
-    beta=u[1]/2
+    beta=u[1]/2*(np.pi/180)
     x1=x0
     x1[0]=x1[0]+DT*u[0]*math.cos(x1[2]+beta)
     x1[1]=x1[1]+DT*u[0]*math.sin(x1[2]+beta)
@@ -36,7 +37,7 @@ def calculateCost(Actions):
     cost = 0
     for state in states:
         ##to be edited later
-        stateCost=state[0]-state[1]
+        stateCost=state[1]-state[0]
         cost+=stateCost
         ###
     return cost
@@ -46,17 +47,31 @@ def generateControlActions():
     Du=perturbations@scale
     return Du
 def FindOptimalControlActions():
+    global nom_U
     costs = np.zeros(SAMPLES)
-    Dus=np.zeros(SAMPLES,HOR,2)
+    Dus=np.zeros((SAMPLES,HOR,2))
     for i in range(SAMPLES):
         Dus[i]=generateControlActions()
         costs[i]=calculateCost(nom_U+Dus[i])
-    weights=np.exp(-1*costs)
+    weights=np.exp(-(1/LAMBDA)*costs)
+    Du=np.einsum("i,ijk->jk",weights,Dus)*(1/(weights.sum(0)))
+    nom_U=nom_U+Du
+    return nom_U
+    '''Du_2=np.zeros((HOR,2))
+    for i in range(SAMPLES):
+        Du_2+=Dus[i]*weights[i]
+    print("Final perturbation = "+str(Du))
+    print("Final perturbation 2 = "+str(Du_2))'''
+
+
 if __name__ == '__main__' :
     rospy.init_node("sim")
     x0=np.array([0.0,0.0,0.0])
     u=np.array([1,0,0])
     states=np.array([[0.0,0.0,0.0],[1.0,0.0,0.0],[2.0,0.0,0.0],[3.0,0.0,0.0],[4.0,0.0,0.0]])
     u0=np.zeros((HOR,2))
-    print(generateControlActions(u0))
+    #print("cost = "+str(calculateCost([[10,0],[10,0],[10,0],[10,0]])))
+    FindOptimalControlActions()
+    print(nom_U)
+    #print(generateControlActions(u0))
     rospy.spin()
