@@ -45,6 +45,7 @@ def obstacle_callback(msg:PointCloud):
 ##
 ##MPPI Functions
 def forwardModel(x0, u):
+    u=u.clip(u,[0,-1*MAXSTEER],[MAXVEL,MAXSTEER])
     beta=u[1]/2*(np.pi/180)
     x1=x0
     x1[0]=x1[0]+DT*u[0]*math.cos(x1[2]+beta)
@@ -86,6 +87,7 @@ def FindOptimalControlActions():
     #print("weights = "+str(weights))
     Du=np.einsum("i,ijk->jk",weights,Dus)*(1/(weights.sum(0)))
     nom_U=nom_U+Du
+    nom_U=nom_U.clip(nom_U,[0,-1*MAXSTEER],[MAXVEL,MAXSTEER])
     return nom_U
     '''Du_2=np.zeros((HOR,2))
     for i in range(SAMPLES):
@@ -107,8 +109,11 @@ if __name__ == '__main__' :
     u=np.array([1,0,0])
     states=np.array([[0.0,0.0,0.0],[1.0,0.0,0.0],[2.0,0.0,0.0],[3.0,0.0,0.0],[4.0,0.0,0.0]])
     u0=np.zeros((HOR,2))
+    a=[[10,20],[20,50],[30,40],[15,10],[3,7],[5,2]]
+    a=np.clip(a,[0,5],[20,10])
+    print(a)
     #print("cost = "+str(calculateCost([[10,0],[10,0],[10,0],[10,0]])))
     FindOptimalControlActions()
-    print(nom_U)
+    #print(nom_U)
     #print(generateControlActions(u0))
     rospy.spin()
