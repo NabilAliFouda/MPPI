@@ -10,7 +10,7 @@ import math
 #control Action is [velocity, steer]
 
 
-#Adham 
+#Adham
 
 #MPPI paramters
 DT=0.1
@@ -26,7 +26,28 @@ MAXVEL=10
 init_state=np.zeros(3)
 nom_U=np.zeros((HOR,2))
 obstacles=[]
+vel=0
+error_integral=0
+error_old=0
 #callbacks for coppelia
+##PID for coppelia
+KP = 0.018
+KI = 0.0812
+KD = 0.0
+def PID(target_vel:float):
+    global vel
+    global error_integral
+    global error_old
+    error = target_vel-vel
+    error_integral=error_integral+error*DT
+    error_differential=(error-error_old)/DT
+    throttle=KP*error+KI*error_integral+KD*error_differential
+    error_old=error
+    if throttle>1:
+        throttle =1
+    if throttle<0:
+        throttle = 0
+    return throttle
 def odom_callback(state:Odometry):
     global init_state
     init_state[0]=state.pose.pose.position.x
@@ -35,6 +56,7 @@ def odom_callback(state:Odometry):
     ori_x = state.pose.pose.orientation.x
     ori_y = state.pose.pose.orientation.y
     ori_z = state.pose.pose.orientation.z
+    vel= math.hypot(state.twist.twist.linear.x,state.twist.twist.linear.y)
     roll, pitch, yaw = euler_from_quaternion([ori_x, ori_y, ori_z, ori_w])
     yaw += (math.pi / 2.0) ##for interfacing with Coppelia
     init_state[2]=yaw
@@ -61,7 +83,7 @@ def calculateCost(Actions):
         for obs in obstacles:
             if math.hypot(state[0]-obs[0],state[1]-obs[1])<obs[2]:
                 return np.inf
-    cost = math.hypot(states[HOR+1,0]-init_state[0],states[HOR+1,1]-init_state[1])
+    cost = math.hypot(states[HOR,0]-init_state[0],states[HOR,1]-init_state[1])
     ##to be edited later
     '''
         stateCost=(state[1]-state[0])+5
