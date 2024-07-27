@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import rospy
 from nav_msgs.msg import Odometry, Path
-from std_msgs.msg import Float64
+from std_msgs.msg import Float64,Float32
 from sensor_msgs.msg import PointCloud
 from tf.transformations import euler_from_quaternion
 import numpy as np
@@ -20,33 +20,39 @@ style.use('fivethirtyeight')
 fig = plt.figure()
 ax1 = fig.add_subplot(1,1,1)
 ##
+odom_l_x=[]
+odom_l_y=[]
 def animate(i):
     find_ref_index()
     FindOptimalControlActions()
-    throttle,brake = PID(nom_U[0,0])
+    #throttle,brake = PID(nom_U[0,0])
+    throttle=nom_U[0,0]
     #print(nom_U)
     steer= nom_U[0,1]
-    print("target velocity ="+str(nom_U[0,0])+", throttle ="+ str(throttle)+", brakes ="+str(brake)+", steer = "+str(steer))
-    brakes_pub.publish(Float64(brake))
-    throttle_pub.publish(Float64(throttle))
-    steer_pub.publish(Float64(steer))
+    print("target velocity ="+str(nom_U[0,0])+", throttle ="+ str(throttle)+" steer = "+str(steer))
+    #brakes_pub.publish(Float64(brake))
+    throttle_pub.publish(Float32(throttle))
+    steer_pub.publish(Float32(steer))
     states=np.full((HOR+1,3),init_state)
+    odom_l_x.append(init_state[0])
+    odom_l_y.append(init_state[1])
     for i in range(HOR):
         states[i+1]=forwardModel(states[i],nom_U[i])
     ax1.clear()
     ax1.set_xlim((-15,15))
     ax1.set_ylim((-15,15))
-    ax1.plot(states[:,0],states[:,1])
+    ax1.plot(states[:,0],states[:,1],color='blue')
+    ax1.plot(odom_l_x,odom_l_y,color='red')
 
 
 #MPPI paramters
 DT=0.1
 HOR=20
-SAMPLES=500
-LAMBDA=10
+SAMPLES=400
+LAMBDA=1
 ###
 #Vehilce Parameters
-L=1
+L=1.05
 MAXSTEER=30
 MAXVEL=3
 ## global variables
@@ -114,7 +120,11 @@ def find_ref_index():
     global ref_index
     if got_path ==True:
         min_dist=100.0
-        for i in range(ref_index,ref_index+5):
+        if ref_index<len(x_path)-5:
+            Range=range(ref_index,ref_index+5)
+        else:
+            Range=np.concatenate((range(ref_index,len(x_path)),range(0,5)))
+        for i in Range:
             if i>=len(x_path):
                 break
             dx=float(x_path[i])-init_state[0]
@@ -143,8 +153,16 @@ def calculateCost(Actions):
     for i in range(HOR):
         states[i+1]=forwardModel(states[i],Actions[i])
     cost = 0
-    dist_x=abs(states[:,0]-x_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)])
-    dist_y=abs(states[:,1]-y_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)])
+    x_ref=[]
+    y_ref=[]
+    if int(HOR*DT*10/0.25)+1+ref_index<len(x_path):
+        x_ref=x_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)]
+        y_ref=y_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)]
+    else:
+        x_ref=x_path.take(range(ref_index,int(HOR*DT*10/0.25)+1+ref_index,int(DT*10/0.25)),mode='wrap')
+        y_ref=y_path.take(range(ref_index,int(HOR*DT*10/0.25)+1+ref_index,int(DT*10/0.25)),mode='wrap')
+    dist_x=abs(states[:,0]-x_ref)
+    dist_y=abs(states[:,1]-y_ref)
     '''
     for state in states:
         for obs in obstacles:
@@ -195,10 +213,13 @@ def FindOptimalControlActions():
 ##Subscribers and publishers for Coppelia
 brakes_pub = rospy.Publisher('/brakes', Float64, queue_size=10)
 state_sub=rospy.Subscriber('/odom',Odometry,callback=odom_callback,queue_size=10)
-throttle_pub=rospy.Publisher('/cmd_vel',Float64,queue_size=10)
-steer_pub=rospy.Publisher('/SteeringAngle',Float64,queue_size=10)
+#throttle_pub=rospy.Publisher('/cmd_vel',Float64,queue_size=10)
+#steer_pub=rospy.Publisher('/SteeringAngle',Float64,queue_size=10)
 obstacle_sub=rospy.Subscriber("/boundary_points", PointCloud, callback=obstacle_callback)
 path_sub=rospy.Subscriber('/Path',Path,path_callback,queue_size=10)
+throttle_pub = rospy.Publisher( '/in_Car_velocity_in_KM/H', Float32, queue_size=10)
+steer_pub = rospy.Publisher('/in_Car_steering_in_degree', Float32, queue_size=10)
+
 ##
 
 if __name__ == '__main__' :
@@ -224,9 +245,10 @@ if __name__ == '__main__' :
         '''
         ##for running without animation
         '''
-        #find_ref_index()
+        find_ref_index()
         FindOptimalControlActions()
-        throttle,brake = PID(nom_U[0,0])
+        #throttle,brake = PID(nom_U[0,0])
+        throttle=nom_U[0,0]
         #print(nom_U)
         steer= nom_U[0,1]
         print("target velocity ="+str(nom_U[0,0])+", throttle ="+ str(throttle)+", brakes ="+str(brake)+", steer = "+str(steer))
