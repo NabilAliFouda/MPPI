@@ -3,6 +3,7 @@ import rospy
 from nav_msgs.msg import Odometry, Path
 from std_msgs.msg import Float64,Float32
 from sensor_msgs.msg import PointCloud
+from geometry_msgs.msg import Point
 from tf.transformations import euler_from_quaternion
 import numpy as np
 import math
@@ -23,27 +24,35 @@ ax1 = fig.add_subplot(1,1,1)
 odom_l_x=[]
 odom_l_y=[]
 def animate(i):
-    find_ref_index()
+    #find_ref_index()
     FindOptimalControlActions()
-    #throttle,brake = PID(nom_U[0,0])
-    throttle=nom_U[0,0]
+    ##switch between Coppelia and real-life interface
+    throttle,brake = PID(nom_U[0,0])
+    #throttle=nom_U[0,0]
     #print(nom_U)
     steer= nom_U[0,1]
     print("target velocity ="+str(nom_U[0,0])+", throttle ="+ str(throttle)+" steer = "+str(steer))
     #brakes_pub.publish(Float64(brake))
-    throttle_pub.publish(Float32(throttle))
-    steer_pub.publish(Float32(steer))
+    throttle_pub.publish(Float64(throttle))
+    steer_pub.publish(Float64(steer))
     states=np.full((HOR+1,3),init_state)
     odom_l_x.append(init_state[0])
     odom_l_y.append(init_state[1])
     for i in range(HOR):
         states[i+1]=forwardModel(states[i],nom_U[i])
+    obs_x=[]
+    obs_y=[]
+    for obs in obstacles:
+        obs_x.append(obs.x)
+        obs_y.append(obs.y)
+    print("number of obstacles =" +str(len(obs_x)))
     ax1.clear()
-    ax1.set_xlim((-15,15))
-    ax1.set_ylim((-15,15))
+    ax1.set_xlim((-30,30))
+    ax1.set_ylim((-30,30))
     ax1.plot(states[:,0],states[:,1],color='blue')
-    ax1.plot(odom_l_x,odom_l_y,color='red')
-
+    ax1.plot(odom_l_x,odom_l_y,color='yellow')
+    ax1.plot(obs_x,obs_y,'ro')
+    ax1.plot(checkPoint[0],checkPoint[1],'go')
 
 #MPPI paramters
 DT=0.1
@@ -52,17 +61,19 @@ SAMPLES=400
 LAMBDA=1
 ###
 #Vehilce Parameters
-L=1.05
+L=1.1345 ##half the wheelbase
+WT=0.8245 ##half the wheeltracks
 MAXSTEER=30
 MAXVEL=3
 ## global variables
 init_state=np.array([0,0,np.pi/2])
 nom_U=np.zeros((HOR,2))
-obstacles=[]
+obstacles=[] ## [obstacle_1, obstacle_2, obstacle_3,..etc]
 vel=0
 error_integral=0
 error_old=0
 got_path=False
+checkPoint=np.array([0,0]) ##[x,y]
 #callbacks for coppelia
 ##PID for coppelia
 KP = 0.018
@@ -100,9 +111,17 @@ def odom_callback(state:Odometry):
     print("current velocity = "+str(vel))
     yaw += (math.pi / 2.0) ##for interfacing with Coppelia
     init_state[2]=yaw
+##callbacks
+def checkPoints_callback(msg:Point):
+    global got_path
+    checkPoint[0]=msg.x
+    checkPoint[1]=msg.y
+    print("checkpoint = "+str(checkPoint))
+    got_path=True
 def obstacle_callback(msg:PointCloud):
     global obstacles
     obstacles=msg.points
+    print("inside")
 def path_callback(msg:Path):
     global x_path
     global y_path
@@ -153,8 +172,10 @@ def calculateCost(Actions):
     for i in range(HOR):
         states[i+1]=forwardModel(states[i],Actions[i])
     cost = 0
+    '''
     x_ref=[]
     y_ref=[]
+    
     if int(HOR*DT*10/0.25)+1+ref_index<len(x_path):
         x_ref=x_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)]
         y_ref=y_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)]
@@ -166,15 +187,15 @@ def calculateCost(Actions):
     '''
     for state in states:
         for obs in obstacles:
-            dist=math.hypot(state[0]-obs[0],state[1]-obs[1])
-            if dist<obs[2]:
+            x_g=obs.x
+            y_g=obs.y
+            x = (x_g - state[0]) * np.cos(state[2]) + (y_g - state[1]) * np.sin(state[2])
+            y = (y_g - state[1]) * np.cos(state[2]) - (x_g - state[0]) * np.sin(state[2])
+            if L < y < -1*L and WT < x < -1*WT:
                 return np.inf
-            else:
-                sum_dist+=dist**2
-    '''
     ##print("distance x summation =" +str(dist_x.sum()))
     ##print("distance x summation =" +str(dist_x.sum()))
-    cost = dist_x.sum()+dist_y.sum()-1*np.hypot(states[HOR,0]-init_state[0],states[HOR,1]-init_state[1])
+    cost = np.hypot(states[HOR,0]-checkPoint[0],states[HOR,1]-checkPoint[1])-0.1*np.hypot(states[HOR,0]-init_state[0],states[HOR,1]-init_state[1])
     ##to be edited later
     '''
         stateCost=(state[1]-state[0])+5
@@ -203,6 +224,7 @@ def FindOptimalControlActions():
     print("######")
     nom_U=nom_U+Du
     nom_U=np.clip(nom_U,[0,-1*MAXSTEER],[MAXVEL,MAXSTEER])
+    print("cost of optimal control action is" +str(calculateCost(nom_U)))
     return nom_U
     '''Du_2=np.zeros((HOR,2))
     for i in range(SAMPLES):
@@ -213,12 +235,13 @@ def FindOptimalControlActions():
 ##Subscribers and publishers for Coppelia
 brakes_pub = rospy.Publisher('/brakes', Float64, queue_size=10)
 state_sub=rospy.Subscriber('/odom',Odometry,callback=odom_callback,queue_size=10)
-#throttle_pub=rospy.Publisher('/cmd_vel',Float64,queue_size=10)
-#steer_pub=rospy.Publisher('/SteeringAngle',Float64,queue_size=10)
-obstacle_sub=rospy.Subscriber("/boundary_points", PointCloud, callback=obstacle_callback)
+throttle_pub=rospy.Publisher('/cmd_vel',Float64,queue_size=10)
+steer_pub=rospy.Publisher('/SteeringAngle',Float64,queue_size=10)
+obstacle_sub=rospy.Subscriber('/obstacles', PointCloud, callback=obstacle_callback)
 path_sub=rospy.Subscriber('/Path',Path,path_callback,queue_size=10)
-throttle_pub = rospy.Publisher( '/in_Car_velocity_in_KM/H', Float32, queue_size=10)
-steer_pub = rospy.Publisher('/in_Car_steering_in_degree', Float32, queue_size=10)
+#throttle_pub = rospy.Publisher( '/in_Car_velocity_in_KM/H', Float32, queue_size=10)
+#steer_pub = rospy.Publisher('/in_Car_steering_in_degree', Float32, queue_size=10)
+check_point_sub=rospy.Subscriber('/checkpoint', Point, checkPoints_callback, queue_size=10)
 
 ##
 
