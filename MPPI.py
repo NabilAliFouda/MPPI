@@ -31,25 +31,28 @@ def animate(i):
     FindOptimalControlActions()
     time2=rospy.get_time()
     ##switch between Coppelia and real-life interface
-    throttle,brake = PID(nom_U[0,0])
-    #throttle=nom_U[0,0]
+    #throttle,brake = PID(nom_U[0,0])
+    throttle=nom_U[0,0]
     #print(nom_U)
     steer= nom_U[0,1]
     print("target velocity ="+str(nom_U[0,0])+", throttle ="+ str(throttle)+" steer = "+str(steer))
-    brakes_pub.publish(Float64(brake))
-    throttle_pub.publish(Float64(throttle))
-    steer_pub.publish(Float64(steer))
+    #brakes_pub.publish(Float64(brake))
+    throttle_pub.publish(Float32(throttle)) ##switch both to float 64 when using coppelia
+    steer_pub.publish(Float32(steer))
     states=np.full((HOR+1,3),init_state)
     odom_l_x.append(init_state[0])
     odom_l_y.append(init_state[1])
     for i in range(HOR):
         states[i+1]=forwardModel(states[i],nom_U[i])
+    '''
     obs_x=[]
     obs_y=[]
     for obs in obstacles:
         obs_x.append(obs.x)
         obs_y.append(obs.y)
+    
     print("number of obstacles =" +str(len(obs_x)))
+    '''
     time3=rospy.get_time()
     print("time for MPPI = "+str(time2-time1))
     print("time for everything else ="+str(time3-time2))
@@ -59,15 +62,12 @@ def animate(i):
     ax1.plot(x_path,y_path,color='black')
     ax1.plot(states[:,0],states[:,1],color ='blue')
     ax1.plot(odom_l_x,odom_l_y,color='orange')
-    x_ref=x_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)]
-    y_ref=y_path[ref_index:int(HOR*DT*10/0.25)+1+ref_index:int(DT*10/0.25)]
     print("ref_index = "+str(ref_index))
     ax1.plot(x_path[ref_index],y_path[ref_index],color='white')
-    ax1.plot(x_ref,y_ref,'ro')
 
 #MPPI paramters
 DT=0.1
-HOR=10
+HOR=20
 SAMPLES=400
 LAMBDA=1
 ###
@@ -79,20 +79,20 @@ MAXVEL=3
 ## global variables
 init_state=np.array([0,0,np.pi/2])
 nom_U=np.zeros((HOR,2))
-obstacles=[] ## [obstacle_1, obstacle_2, obstacle_3,..etc]
+x_path=[]
+y_path=[]
+ref_index=0
+#obstacles=[] ## [obstacle_1, obstacle_2, obstacle_3,..etc]
 vel=0
 error_integral=0
 error_old=0
 got_path=False
-checkPoint=np.array([0,0]) ##[x,y]
+#checkPoint=np.array([0,0]) ##[x,y]
 #callbacks for coppelia
 ##PID for coppelia
 KP = 0.018
 KI = 0.0812
 KD = 0.0
-x_path=[]
-y_path=[]
-ref_index=0
 def PID(target_vel:float):
     global vel
     global error_integral
@@ -120,15 +120,18 @@ def odom_callback(state:Odometry):
     vel= math.hypot(state.twist.twist.linear.x,state.twist.twist.linear.y)
     roll, pitch, yaw = euler_from_quaternion([ori_x, ori_y, ori_z, ori_w])
     print("current velocity = "+str(vel))
-    yaw += (math.pi / 2.0) ##for interfacing with Coppelia
+    #yaw += (math.pi / 2.0) ##for interfacing with Coppelia
     init_state[2]=yaw
 ##callbacks
+'''
 def checkPoints_callback(msg:Point):
     global got_path
     checkPoint[0]=msg.x
     checkPoint[1]=msg.y
     print("checkpoint = "+str(checkPoint))
     got_path=True
+'''
+'''
 def obstacle_callback(msg:PointCloud):
     global obstacles
     obstacles.clear()
@@ -139,6 +142,7 @@ def obstacle_callback(msg:PointCloud):
         ##obs.append(point.z)
         obstacles.append(obstacles)
     print("inside")
+'''
 def path_callback(msg:Path):
     global x_path
     global y_path
@@ -177,7 +181,7 @@ def find_ref_index():
 ##MPPI Functions
 def forwardModel(x0, u):
     u=np.clip(u,[0,-1*MAXSTEER],[MAXVEL,MAXSTEER])
-    beta=u[1]/2*(np.pi/180)
+    beta=-1*u[1]/2*(np.pi/180) ##multiply by negative 1 during real life demo
     x1=x0
     x1[0]=x1[0]+DT*u[0]*math.cos(x1[2]+beta)
     x1[1]=x1[1]+DT*u[0]*math.sin(x1[2]+beta)
@@ -185,6 +189,7 @@ def forwardModel(x0, u):
     return x1
 def calculateCost(Actions):
     global ref_index
+    Actions=np.reshape(Actions,(HOR,2))
     states=np.full((HOR+1,3),init_state)
     for i in range(HOR):
         states[i+1]=forwardModel(states[i],Actions[i])
@@ -201,12 +206,10 @@ def calculateCost(Actions):
         y_ref=y_path.take(range(ref_index,HOR*int(DT*MAXVEL/0.25)+ref_index+1,int(DT*MAXVEL/0.25)),mode='wrap')
     dist_x=abs(states[:,0]-x_ref)
     dist_y=abs(states[:,1]-y_ref)
-    print("Actions added = "+str())
-    Actions_added=np.insert(np.append(Actions,[0,0]),0,[0,0])
-    Rterm=abs(Actions_added[2:]-Actions_added[:-2]).sum()
-    print("Actions added = "+str(Actions_added))
-    print("Rterm = "+str(abs(Actions_added[2:]-Actions_added[:-2])))
-    cost = dist_x.sum()+dist_y.sum()-0.5*np.hypot(states[HOR,0]-init_state[0],states[HOR,1]-init_state[1])+0.05*Rterm
+    #Actions_added=np.insert(np.append(Actions,[0,0]),0,[0,0])
+    #Rterm=abs(Actions_added[2:]-Actions_added[:-2]).sum()
+
+    cost = dist_x.sum()+dist_y.sum()-0.5*np.hypot(states[HOR,0]-init_state[0],states[HOR,1]-init_state[1])
     ##Rterm may be removed it only slightly decreases oscillations
     return cost
 
@@ -219,9 +222,12 @@ def FindOptimalControlActions():
     global nom_U
     costs = np.zeros(SAMPLES)
     Dus=np.zeros((SAMPLES,HOR,2))
+    time1=rospy.get_time()
     for i in range(SAMPLES):
         Dus[i]=generateControlActions()
         costs[i]=calculateCost(nom_U+Dus[i])
+    time2=rospy.get_time()
+    print("the time taken for this for loop is"+str(time2-time1))
     #print("costs = "+str(costs))
     weights=np.exp(-(1/LAMBDA)*costs)
     #print("weights = "+str(weights))
@@ -239,14 +245,14 @@ def FindOptimalControlActions():
     print("Final perturbation 2 = "+str(Du_2))'''
 ###
 ##Subscribers and publishers for Coppelia
-brakes_pub = rospy.Publisher('/brakes', Float64, queue_size=10)
+#brakes_pub = rospy.Publisher('/brakes', Float64, queue_size=10)
 state_sub=rospy.Subscriber('/odom',Odometry,callback=odom_callback,queue_size=10)
-throttle_pub=rospy.Publisher('/cmd_vel',Float64,queue_size=10) ##coppelia
-steer_pub=rospy.Publisher('/SteeringAngle',Float64,queue_size=10)  ##coppelia
+#throttle_pub=rospy.Publisher('/cmd_vel',Float64,queue_size=10) ##coppelia
+#steer_pub=rospy.Publisher('/SteeringAngle',Float64,queue_size=10)  ##coppelia
 #obstacle_sub=rospy.Subscriber('/obstacles', PointCloud, callback=obstacle_callback)
 path_sub=rospy.Subscriber('/Path',Path,path_callback,queue_size=10)
-#throttle_pub = rospy.Publisher( '/in_Car_velocity_in_KM/H', Float32, queue_size=10)   ##realLife
-#steer_pub = rospy.Publisher('/in_Car_steering_in_degree', Float32, queue_size=10)     ##realLife
+throttle_pub = rospy.Publisher( '/in_Car_velocity_in_KM/H', Float32, queue_size=10)   ##realLife
+steer_pub = rospy.Publisher('/in_Car_steering_in_degree', Float32, queue_size=10)     ##realLife
 #check_point_sub=rospy.Subscriber('/checkpoint', Point, checkPoints_callback, queue_size=10)
 
 ##
